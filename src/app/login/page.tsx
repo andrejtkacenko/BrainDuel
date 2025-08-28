@@ -54,13 +54,22 @@ export default function AuthPage() {
 
       router.push("/");
 
-    } catch (error) {
-      console.error("Authentication failed:", error);
-      toast({
-        title: "Authentication Failed",
-        description: "Could not sign you in. Please try again.",
-        variant: "destructive",
-      });
+    } catch (error: any) {
+       if (error.code === 'auth/configuration-not-found') {
+        toast({
+          title: "Authentication Not Configured",
+          description: "Anonymous sign-in is not enabled. Please enable it in your Firebase Console: Authentication > Sign-in method > Add new provider > Anonymous.",
+          variant: "destructive",
+          duration: 9000,
+        });
+      } else {
+        console.error("Authentication failed:", error);
+        toast({
+          title: "Authentication Failed",
+          description: "Could not sign you in. Please try again.",
+          variant: "destructive",
+        });
+      }
       setLoading(false);
     }
   };
