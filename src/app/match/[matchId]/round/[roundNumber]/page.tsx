@@ -1,200 +1,147 @@
 "use client";
 
-import { useState, useEffect, useReducer } from 'react';
-import { useRouter, useParams, useSearchParams } from 'next/navigation';
+import { useState, useEffect } from 'react';
+import { useRouter, useParams } from 'next/navigation';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import Header from '@/components/header';
 import { cn } from '@/lib/utils';
-import type { Question } from '@/lib/types';
+import type { Question as QuestionType, Match } from '@/lib/types';
 import { generateQuestions } from '@/ai/flows/question-flow';
 import { Skeleton } from '@/components/ui/skeleton';
+import { useAuth } from '@/hooks/use-auth';
+import { useMatch } from '@/hooks/use-match';
+import { doc, updateDoc, arrayUnion } from 'firebase/firestore';
+import { db } from '@/lib/firebase';
 
 const TIMER_DURATION = 15;
 
-type RoundState = {
-  questions: Question[];
-  currentQuestionIndex: number;
-  selectedAnswer: string | null;
-  isAnswered: boolean;
-  timeLeft: number;
-  loading: boolean;
-  userScore: number;
-  opponentScore: number;
-  userAnswers: (string | null)[];
-  opponentAnswers: (string | null)[];
-};
-
-type RoundAction =
-  | { type: 'SET_QUESTIONS'; payload: Question[] }
-  | { type: 'ANSWER_QUESTION'; payload: string }
-  | { type: 'NEXT_QUESTION' }
-  | { type: 'TICK_TIMER' }
-  | { type: 'SET_LOADING'; payload: boolean };
-
-const initialState: RoundState = {
-  questions: [],
-  currentQuestionIndex: 0,
-  selectedAnswer: null,
-  isAnswered: false,
-  timeLeft: TIMER_DURATION,
-  loading: true,
-  userScore: 0,
-  userAnswers: [],
-  opponentScore: 0,
-  opponentAnswers: [],
-};
-
-function roundReducer(state: RoundState, action: RoundAction): RoundState {
-  switch (action.type) {
-    case 'SET_QUESTIONS':
-      return { ...initialState, questions: action.payload, loading: false };
-    case 'ANSWER_QUESTION': {
-      if (state.isAnswered) return state;
-      const currentQuestion = state.questions[state.currentQuestionIndex];
-      const userAnswer = action.payload;
-      const isCorrect = userAnswer === currentQuestion.correctAnswer;
-      
-      // Simulate opponent's answer
-      const opponentAnswer = currentQuestion.options[Math.floor(Math.random() * currentQuestion.options.length)];
-      const isOpponentCorrect = opponentAnswer === currentQuestion.correctAnswer;
-
-      return {
-        ...state,
-        isAnswered: true,
-        selectedAnswer: userAnswer,
-        userScore: state.userScore + (isCorrect ? 1 : 0),
-        opponentScore: state.opponentScore + (isOpponentCorrect ? 1 : 0),
-        userAnswers: [...state.userAnswers, userAnswer],
-        opponentAnswers: [...state.opponentAnswers, opponentAnswer],
-      };
-    }
-    case 'NEXT_QUESTION':
-      if (state.currentQuestionIndex < state.questions.length - 1) {
-        return {
-          ...state,
-          currentQuestionIndex: state.currentQuestionIndex + 1,
-          isAnswered: false,
-          selectedAnswer: null,
-          timeLeft: TIMER_DURATION,
-        };
-      }
-      return state; // No change if last question
-    case 'TICK_TIMER':
-      return { ...state, timeLeft: Math.max(0, state.timeLeft - 1) };
-    case 'SET_LOADING':
-      return { ...state, loading: action.payload };
-    default:
-      return state;
-  }
-}
+const LoadingScreen = () => (
+  <div className="flex flex-col min-h-screen">
+    <Header />
+    <main className="flex-1 container mx-auto p-4 md:p-8 flex items-center justify-center">
+      <Card className="w-full max-w-2xl">
+        <CardHeader>
+          <div className="flex justify-between items-center mb-2">
+            <Skeleton className="h-8 w-32" />
+            <Skeleton className="h-6 w-24" />
+          </div>
+          <Skeleton className="h-4 w-full" />
+        </CardHeader>
+        <CardContent className="space-y-6 pt-6">
+          <Skeleton className="h-32 w-full" />
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <Skeleton className="h-16 w-full" />
+            <Skeleton className="h-16 w-full" />
+            <Skeleton className="h-16 w-full" />
+            <Skeleton className="h-16 w-full" />
+          </div>
+        </CardContent>
+      </Card>
+    </main>
+  </div>
+);
 
 export default function QuizRound() {
   const router = useRouter();
   const params = useParams();
-  const searchParams = useSearchParams();
-  const { matchId, roundNumber } = params;
-  const category = searchParams.get('category') || 'General Knowledge';
+  const { matchId, roundNumber: roundNumberStr } = params;
+  const roundNumber = parseInt(roundNumberStr as string, 10);
 
-  const [state, dispatch] = useReducer(roundReducer, initialState);
-  const {
-    questions,
-    currentQuestionIndex,
-    selectedAnswer,
-    isAnswered,
-    timeLeft,
-    loading,
-    userScore,
-    opponentScore,
-    userAnswers,
-    opponentAnswers,
-  } = state;
+  const { user } = useAuth();
+  const { match, loading: matchLoading } = useMatch(matchId as string);
+
+  const [questions, setQuestions] = useState<QuestionType[]>([]);
+  const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
+  const [selectedAnswer, setSelectedAnswer] = useState<string | null>(null);
+  const [isAnswered, setIsAnswered] = useState(false);
+  const [timeLeft, setTimeLeft] = useState(TIMER_DURATION);
+  const [loadingQuestions, setLoadingQuestions] = useState(true);
+
+  const currentRound = match?.rounds.find(r => r.number === roundNumber);
 
   useEffect(() => {
-    async function fetchQuestions() {
-      try {
-        dispatch({ type: 'SET_LOADING', payload: true });
-        const response = await generateQuestions({ category, count: 3 });
-        if (response && response.questions) {
-          dispatch({ type: 'SET_QUESTIONS', payload: response.questions });
+    if (!match || !user) return;
+    
+    // Redirect if round is already completed by this user
+    const myPlayerKey = match.player1Id === user.uid ? 'player1Answers' : 'player2Answers';
+    if(currentRound && currentRound[myPlayerKey] && currentRound[myPlayerKey].length >= currentRound.questions.length) {
+      router.push(`/match/${matchId}/round/${roundNumber}/results`);
+      return;
+    }
+    
+    // Creator generates questions
+    if (match.creatorId === user.uid && currentRound && currentRound.questions.length === 0) {
+      const fetchQuestions = async () => {
+        try {
+          const response = await generateQuestions({ category: currentRound.category, count: 3 });
+          if (response && response.questions) {
+            setQuestions(response.questions);
+            setLoadingQuestions(false);
+            const matchRef = doc(db, 'matches', matchId as string);
+            const roundIndex = match.rounds.findIndex(r => r.number === roundNumber);
+            const updatedRounds = [...match.rounds];
+            updatedRounds[roundIndex].questions = response.questions;
+            await updateDoc(matchRef, { rounds: updatedRounds });
+          }
+        } catch (error) {
+          console.error("Failed to generate questions:", error);
         }
-      } catch (error) {
-        console.error("Failed to generate questions:", error);
-      }
-    }
-    fetchQuestions();
-  }, [category]);
-
-  const handleNext = () => {
-    if (currentQuestionIndex < questions.length - 1) {
-      dispatch({ type: 'NEXT_QUESTION' });
-    } else {
-       // End of round, navigate to results
-       const results = {
-        roundNumber: Number(roundNumber),
-        player1Score: userScore,
-        player2Score: opponentScore,
-        questions: questions.map((q, i) => ({
-          text: q.text,
-          player1Answer: userAnswers[i],
-          player2Answer: opponentAnswers[i],
-          correctAnswer: q.correctAnswer,
-        })),
-        isFinalRound: Number(roundNumber) === 3, // Assuming 3 rounds for now
       };
-      router.push(`/match/${matchId}/round/${roundNumber}/results?results=${encodeURIComponent(JSON.stringify(results))}`);
+      fetchQuestions();
+    } else if (currentRound && currentRound.questions.length > 0) {
+      setQuestions(currentRound.questions);
+      setLoadingQuestions(false);
+    }
+  }, [match, user, roundNumber, matchId, router, currentRound]);
+
+  const handleNextQuestion = () => {
+    if (currentQuestionIndex < questions.length - 1) {
+      setCurrentQuestionIndex(prev => prev + 1);
+      setIsAnswered(false);
+      setSelectedAnswer(null);
+      setTimeLeft(TIMER_DURATION);
+    } else {
+      router.push(`/match/${matchId}/round/${roundNumber}/results`);
     }
   };
-  
-  const handleAnswerSelect = (option: string) => {
-    if (isAnswered) return;
-    dispatch({ type: 'ANSWER_QUESTION', payload: option });
-    setTimeout(handleNext, 2000);
+
+  const handleAnswerSelect = async (answer: string) => {
+    if (isAnswered || !match || !user) return;
+
+    setIsAnswered(true);
+    setSelectedAnswer(answer);
+
+    const matchRef = doc(db, 'matches', matchId as string);
+    const roundIndex = match.rounds.findIndex(r => r.number === roundNumber);
+    const answerField = match.player1Id === user.uid ? `rounds.${roundIndex}.player1Answers` : `rounds.${roundIndex}.player2Answers`;
+    
+    await updateDoc(matchRef, {
+      [answerField]: arrayUnion({ questionId: questions[currentQuestionIndex].id, answer })
+    });
+    
+    setTimeout(handleNextQuestion, 2000);
   };
 
   useEffect(() => {
-    if (loading || isAnswered) return;
-
+    if (loadingQuestions || isAnswered || matchLoading) return;
+    
     if (timeLeft === 0) {
-      handleAnswerSelect("No Answer"); // Treat timeout as "No Answer"
+      handleAnswerSelect("No Answer");
       return;
     }
 
     const timer = setInterval(() => {
-      dispatch({ type: 'TICK_TIMER' });
+      setTimeLeft(t => Math.max(0, t - 1));
     }, 1000);
 
     return () => clearInterval(timer);
-  }, [timeLeft, isAnswered, loading]);
+  }, [timeLeft, isAnswered, loadingQuestions, matchLoading]);
 
 
-  if (loading || questions.length === 0) {
-    return (
-      <div className="flex flex-col min-h-screen">
-        <Header />
-        <main className="flex-1 container mx-auto p-4 md:p-8 flex items-center justify-center">
-          <Card className="w-full max-w-2xl">
-            <CardHeader>
-              <div className="flex justify-between items-center mb-2">
-                <Skeleton className="h-8 w-32" />
-                <Skeleton className="h-6 w-24" />
-              </div>
-              <Skeleton className="h-4 w-full" />
-            </CardHeader>
-            <CardContent className="space-y-6">
-              <Skeleton className="h-32 w-full" />
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <Skeleton className="h-16 w-full" />
-                <Skeleton className="h-16 w-full" />
-                <Skeleton className="h-16 w-full" />
-                <Skeleton className="h-16 w-full" />
-              </div>
-            </CardContent>
-          </Card>
-        </main>
-      </div>
-    );
+  if (matchLoading || loadingQuestions || questions.length === 0 || !match) {
+    return <LoadingScreen />;
   }
 
   const currentQuestion = questions[currentQuestionIndex];
@@ -212,7 +159,7 @@ export default function QuizRound() {
             </div>
             <Progress value={progress} />
           </CardHeader>
-          <CardContent className="space-y-6">
+          <CardContent className="space-y-6 pt-6">
             <p className="text-xl md:text-2xl text-center font-medium min-h-[8rem] flex items-center justify-center p-4 bg-secondary rounded-lg">{currentQuestion.text}</p>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {currentQuestion.options.map(option => {
