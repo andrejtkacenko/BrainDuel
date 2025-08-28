@@ -21,11 +21,11 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      setLoading(true);
       if (user) {
         // User is signed in, update their online status
         const userRef = doc(db, "users", user.uid);
         try {
-          // Use setDoc with merge to create/update the document
           await setDoc(userRef, { online: true }, { merge: true });
         } catch (e) {
           console.error("Error updating online status: ", e);
