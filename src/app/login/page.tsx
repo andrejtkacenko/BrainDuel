@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { BrainCircuit, LogIn, UserPlus } from "lucide-react";
+import { BrainCircuit, UserPlus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -50,7 +50,7 @@ export default function AuthPage() {
         wins: 0,
         losses: 0,
         online: true,
-      });
+      }, { merge: true });
 
       router.push("/");
 
