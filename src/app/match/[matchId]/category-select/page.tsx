@@ -40,7 +40,7 @@ export default function CategorySelect() {
 
   const handleSelectCategory = (category: string) => {
     if (!myTurn) return;
-    router.push(`/match/${matchId}/round/${currentRound}`);
+    router.push(`/match/${matchId}/round/${currentRound}?category=${encodeURIComponent(category)}`);
   };
 
   return (

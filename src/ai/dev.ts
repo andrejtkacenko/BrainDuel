@@ -1,1 +1,3 @@
-// Flows will be imported for their side effects in this file.
+'use server';
+
+import './flows/question-flow';
