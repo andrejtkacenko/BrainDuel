@@ -178,7 +178,7 @@ export default function Dashboard() {
                   ))}
                 </ul>
               ) : (
-                 <p className="text-sm text-muted-foreground text-center py-8">В данный момент других игроков нет в сети.</p>
+                 <p className="text-sm text-muted-foreground text-center py-8">No other players are online right now.</p>
               )}
             </CardContent>
           </Card>
