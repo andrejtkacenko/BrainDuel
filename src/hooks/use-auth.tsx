@@ -3,7 +3,7 @@
 import { createContext, useContext, useEffect, useState, ReactNode } from "react";
 import { onAuthStateChanged, User as FirebaseUser } from "firebase/auth";
 import { auth, db } from "@/lib/firebase";
-import { doc, onSnapshot, setDoc } from "firebase/firestore";
+import { doc, setDoc } from "firebase/firestore";
 
 interface AuthContextType {
   user: FirebaseUser | null;
@@ -30,8 +30,11 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         } catch (e) {
           console.error("Error updating online status: ", e);
         }
+        setUser(user);
+      } else {
+        // User is signed out
+        setUser(null);
       }
-      setUser(user);
       setLoading(false);
     });
 
