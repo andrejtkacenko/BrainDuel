@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { Swords, Users, Gamepad2, Loader2, RefreshCw } from "lucide-react";
+import { Swords, Users, Gamepad2, Loader2 } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import {
@@ -12,9 +12,9 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { useAuth } from "@/hooks/use-auth";
-import { collection, query, where, getDocs, addDoc, serverTimestamp, updateDoc, doc } from "firebase/firestore";
+import { collection, query, where, addDoc, serverTimestamp, updateDoc, doc, onSnapshot } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState } from "react";
 import type { User, Match } from "@/lib/types";
 import { useToast } from "@/hooks/use-toast";
 
@@ -29,58 +29,64 @@ export default function Dashboard() {
   const [loadingUsers, setLoadingUsers] = useState(true);
   const [loadingChallenges, setLoadingChallenges] = useState(true);
 
-  const fetchUsers = useCallback(async () => {
+  useEffect(() => {
     if (!user) return;
+
     setLoadingUsers(true);
-    try {
-      const q = query(collection(db, "users"), where("uid", "!=", user.uid));
-      const querySnapshot = await getDocs(q);
+    const usersQuery = query(collection(db, "users"), where("uid", "!=", user.uid));
+    const unsubscribeUsers = onSnapshot(usersQuery, (querySnapshot) => {
       const userList: User[] = [];
       querySnapshot.forEach((doc) => {
         userList.push(doc.data() as User);
       });
       setUsers(userList);
-    } catch (error) {
+      setLoadingUsers(false);
+    }, (error) => {
       console.error("Error fetching users:", error);
       toast({ title: "Error", description: "Could not fetch other players.", variant: "destructive" });
-    }
-    setLoadingUsers(false);
+      setLoadingUsers(false);
+    });
+
+    return () => unsubscribeUsers();
   }, [user, toast]);
 
-  const fetchChallenges = useCallback(async () => {
+  useEffect(() => {
     if (!user) return;
+
     setLoadingChallenges(true);
-    try {
-      const q = query(
-        collection(db, "matches"),
-        where("status", "==", "lobby"),
-        where("player2Id", "==", null),
-        where("creatorId", "!=", user.uid)
-      );
-      const querySnapshot = await getDocs(q);
+    const challengesQuery = query(
+      collection(db, "matches"),
+      where("status", "==", "lobby"),
+      where("player2Id", "==", null),
+      where("creatorId", "!=", user.uid)
+    );
+    const unsubscribeChallenges = onSnapshot(challengesQuery, (querySnapshot) => {
       const challengeList: Match[] = [];
       querySnapshot.forEach((doc) => {
         challengeList.push({ id: doc.id, ...doc.data() } as Match);
       });
       setChallenges(challengeList);
-    } catch (error) {
+      setLoadingChallenges(false);
+    }, (error) => {
       console.error("Error fetching challenges:", error);
       toast({ title: "Error", description: "Could not fetch open games.", variant: "destructive" });
-    }
-    setLoadingChallenges(false);
+      setLoadingChallenges(false);
+    });
+    
+    return () => unsubscribeChallenges();
   }, [user, toast]);
-  
-  useEffect(() => {
-    fetchUsers();
-    fetchChallenges();
-  }, [fetchUsers, fetchChallenges]);
 
-
-  const handleChallenge = async (challengedUser: User) => {
+  const handleChallenge = async () => {
     if (!user) return;
 
     try {
-      const myUserDoc = (await getDocs(query(collection(db, "users"), where("uid", "==", user.uid)))).docs[0];
+      const q = query(collection(db, "users"), where("uid", "==", user.uid));
+      const querySnapshot = await getDocs(q);
+      const myUserDoc = querySnapshot.docs[0];
+
+      if (!myUserDoc) {
+        throw new Error("Could not find your user data.");
+      }
 
       const matchRef = await addDoc(collection(db, "matches"), {
         creatorId: user.uid,
@@ -90,7 +96,7 @@ export default function Dashboard() {
         currentRound: 1,
         turn: user.uid,
         player1Id: user.uid,
-        player2Id: null, // Open challenge for now
+        player2Id: null,
         players: {
           [user.uid]: myUserDoc.data()
         }
@@ -105,7 +111,13 @@ export default function Dashboard() {
   const handleAccept = async (matchId: string) => {
      if (!user) return;
     try {
-      const myUserDoc = (await getDocs(query(collection(db, "users"), where("uid", "==", user.uid)))).docs[0];
+      const q = query(collection(db, "users"), where("uid", "==", user.uid));
+      const querySnapshot = await getDocs(q);
+      const myUserDoc = querySnapshot.docs[0];
+
+      if (!myUserDoc) {
+        throw new Error("Could not find your user data.");
+      }
       
       const matchRef = doc(db, "matches", matchId);
       await updateDoc(matchRef, {
@@ -119,11 +131,6 @@ export default function Dashboard() {
     }
   };
 
-  const refreshAll = () => {
-    fetchUsers();
-    fetchChallenges();
-  }
-
   return (
     <main className="flex-1 p-4 md:p-8">
       <div className="container grid gap-8 md:grid-cols-2 lg:grid-cols-3">
@@ -133,14 +140,10 @@ export default function Dashboard() {
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <Users className="h-5 w-5 text-primary" />
-                  <CardTitle className="font-headline">Challenge a Player</CardTitle>
+                  <CardTitle className="font-headline">Online Players</CardTitle>
                 </div>
-                 <Button variant="ghost" size="sm" onClick={fetchUsers} disabled={loadingUsers}>
-                    <RefreshCw className={`mr-2 h-4 w-4 ${loadingUsers ? 'animate-spin' : ''}`} />
-                    Refresh
-                  </Button>
               </div>
-              <CardDescription>Find an opponent and start a new duel.</CardDescription>
+              <CardDescription>Start a new duel with an online player.</CardDescription>
             </CardHeader>
             <CardContent>
               {loadingUsers ? (
@@ -163,9 +166,9 @@ export default function Dashboard() {
                           </p>
                         </div>
                       </div>
-                      <Button variant="outline" size="sm" onClick={() => handleChallenge(u)}>
+                      <Button variant="outline" size="sm" onClick={handleChallenge}>
                         <Swords className="mr-2 h-4 w-4" />
-                        Challenge
+                        Create Game
                       </Button>
                     </li>
                   ))}
@@ -184,12 +187,8 @@ export default function Dashboard() {
                   <Gamepad2 className="h-5 w-5 text-primary" />
                   <CardTitle className="font-headline">Open Games</CardTitle>
                 </div>
-                 <Button variant="ghost" size="sm" onClick={fetchChallenges} disabled={loadingChallenges}>
-                    <RefreshCw className={`mr-2 h-4 w-4 ${loadingChallenges ? 'animate-spin' : ''}`} />
-                    Refresh
-                  </Button>
               </div>
-              <CardDescription>You have been challenged! Accept to begin.</CardDescription>
+              <CardDescription>Join an open game and start playing.</CardDescription>
             </CardHeader>
             <CardContent>
                {loadingChallenges ? (
@@ -201,7 +200,7 @@ export default function Dashboard() {
                   {challenges.map((challenge) => (
                     <li key={challenge.id} className="flex items-center justify-between p-2 rounded-lg hover:bg-secondary transition-colors">
                       <div>
-                        <p><span className="font-semibold">{challenge.players[challenge.creatorId].name}</span> wants to duel!</p>
+                        <p><span className="font-semibold">{challenge.players[challenge.creatorId].name}</span> is waiting for a challenger!</p>
                       </div>
                       <Button size="sm" onClick={() => handleAccept(challenge.id)}>Accept</Button>
                     </li>
