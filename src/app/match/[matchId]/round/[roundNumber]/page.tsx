@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useReducer } from 'react';
 import { useRouter, useParams, useSearchParams } from 'next/navigation';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -13,6 +13,83 @@ import { Skeleton } from '@/components/ui/skeleton';
 
 const TIMER_DURATION = 15;
 
+type RoundState = {
+  questions: Question[];
+  currentQuestionIndex: number;
+  selectedAnswer: string | null;
+  isAnswered: boolean;
+  timeLeft: number;
+  loading: boolean;
+  userScore: number;
+  opponentScore: number;
+  userAnswers: (string | null)[];
+  opponentAnswers: (string | null)[];
+};
+
+type RoundAction =
+  | { type: 'SET_QUESTIONS'; payload: Question[] }
+  | { type: 'ANSWER_QUESTION'; payload: string }
+  | { type: 'NEXT_QUESTION' }
+  | { type: 'TICK_TIMER' }
+  | { type: 'SET_LOADING'; payload: boolean };
+
+const initialState: RoundState = {
+  questions: [],
+  currentQuestionIndex: 0,
+  selectedAnswer: null,
+  isAnswered: false,
+  timeLeft: TIMER_DURATION,
+  loading: true,
+  userScore: 0,
+  userAnswers: [],
+  opponentScore: 0,
+  opponentAnswers: [],
+};
+
+function roundReducer(state: RoundState, action: RoundAction): RoundState {
+  switch (action.type) {
+    case 'SET_QUESTIONS':
+      return { ...initialState, questions: action.payload, loading: false };
+    case 'ANSWER_QUESTION': {
+      if (state.isAnswered) return state;
+      const currentQuestion = state.questions[state.currentQuestionIndex];
+      const userAnswer = action.payload;
+      const isCorrect = userAnswer === currentQuestion.correctAnswer;
+      
+      // Simulate opponent's answer
+      const opponentAnswer = currentQuestion.options[Math.floor(Math.random() * currentQuestion.options.length)];
+      const isOpponentCorrect = opponentAnswer === currentQuestion.correctAnswer;
+
+      return {
+        ...state,
+        isAnswered: true,
+        selectedAnswer: userAnswer,
+        userScore: state.userScore + (isCorrect ? 1 : 0),
+        opponentScore: state.opponentScore + (isOpponentCorrect ? 1 : 0),
+        userAnswers: [...state.userAnswers, userAnswer],
+        opponentAnswers: [...state.opponentAnswers, opponentAnswer],
+      };
+    }
+    case 'NEXT_QUESTION':
+      if (state.currentQuestionIndex < state.questions.length - 1) {
+        return {
+          ...state,
+          currentQuestionIndex: state.currentQuestionIndex + 1,
+          isAnswered: false,
+          selectedAnswer: null,
+          timeLeft: TIMER_DURATION,
+        };
+      }
+      return state; // No change if last question
+    case 'TICK_TIMER':
+      return { ...state, timeLeft: Math.max(0, state.timeLeft - 1) };
+    case 'SET_LOADING':
+      return { ...state, loading: action.payload };
+    default:
+      return state;
+  }
+}
+
 export default function QuizRound() {
   const router = useRouter();
   const params = useParams();
@@ -20,68 +97,77 @@ export default function QuizRound() {
   const { matchId, roundNumber } = params;
   const category = searchParams.get('category') || 'General Knowledge';
 
-  const [questions, setQuestions] = useState<Question[]>([]);
-  const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
-  const [selectedAnswer, setSelectedAnswer] = useState<string | null>(null);
-  const [isAnswered, setIsAnswered] = useState(false);
-  const [timeLeft, setTimeLeft] = useState(TIMER_DURATION);
-  const [loading, setLoading] = useState(true);
+  const [state, dispatch] = useReducer(roundReducer, initialState);
+  const {
+    questions,
+    currentQuestionIndex,
+    selectedAnswer,
+    isAnswered,
+    timeLeft,
+    loading,
+    userScore,
+    opponentScore,
+    userAnswers,
+    opponentAnswers,
+  } = state;
 
   useEffect(() => {
     async function fetchQuestions() {
       try {
-        setLoading(true);
+        dispatch({ type: 'SET_LOADING', payload: true });
         const response = await generateQuestions({ category, count: 3 });
         if (response && response.questions) {
-          setQuestions(response.questions);
+          dispatch({ type: 'SET_QUESTIONS', payload: response.questions });
         }
       } catch (error) {
         console.error("Failed to generate questions:", error);
-        // Fallback to mock questions if AI fails
-        // setQuestions(mockQuestions);
-      } finally {
-        setLoading(false);
       }
     }
     fetchQuestions();
   }, [category]);
 
+  const handleNext = () => {
+    if (currentQuestionIndex < questions.length - 1) {
+      dispatch({ type: 'NEXT_QUESTION' });
+    } else {
+       // End of round, navigate to results
+       const results = {
+        roundNumber: Number(roundNumber),
+        player1Score: userScore,
+        player2Score: opponentScore,
+        questions: questions.map((q, i) => ({
+          text: q.text,
+          player1Answer: userAnswers[i],
+          player2Answer: opponentAnswers[i],
+          correctAnswer: q.correctAnswer,
+        })),
+        isFinalRound: Number(roundNumber) === 3, // Assuming 3 rounds for now
+      };
+      router.push(`/match/${matchId}/round/${roundNumber}/results?results=${encodeURIComponent(JSON.stringify(results))}`);
+    }
+  };
+  
+  const handleAnswerSelect = (option: string) => {
+    if (isAnswered) return;
+    dispatch({ type: 'ANSWER_QUESTION', payload: option });
+    setTimeout(handleNext, 2000);
+  };
+
   useEffect(() => {
     if (loading || isAnswered) return;
 
     if (timeLeft === 0) {
-      handleNext();
+      handleAnswerSelect("No Answer"); // Treat timeout as "No Answer"
       return;
     }
 
     const timer = setInterval(() => {
-      setTimeLeft(prev => prev > 0 ? prev - 1 : 0);
+      dispatch({ type: 'TICK_TIMER' });
     }, 1000);
 
     return () => clearInterval(timer);
   }, [timeLeft, isAnswered, loading]);
 
-  const handleNext = () => {
-    setIsAnswered(false);
-    setSelectedAnswer(null);
-
-    if (currentQuestionIndex < questions.length - 1) {
-      setCurrentQuestionIndex(prev => prev + 1);
-      setTimeLeft(TIMER_DURATION);
-    } else {
-      router.push(`/match/${matchId}/round/${roundNumber}/results`);
-    }
-  };
-
-  const handleAnswerSelect = (option: string) => {
-    if (isAnswered) return;
-    setIsAnswered(true);
-    setSelectedAnswer(option);
-    
-    // In a real app, you would record the answer and timing.
-
-    setTimeout(handleNext, 2000); // Wait 2 seconds before moving to the next question
-  };
 
   if (loading || questions.length === 0) {
     return (
