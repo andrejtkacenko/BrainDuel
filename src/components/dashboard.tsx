@@ -12,7 +12,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { useAuth } from "@/hooks/use-auth";
-import { collection, query, where, addDoc, serverTimestamp, updateDoc, doc, onSnapshot } from "firebase/firestore";
+import { collection, query, where, addDoc, serverTimestamp, updateDoc, doc, onSnapshot, getDocs } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { useEffect, useState } from "react";
 import type { User, Match } from "@/lib/types";
@@ -33,7 +33,11 @@ export default function Dashboard() {
     if (!user) return;
 
     setLoadingUsers(true);
-    const usersQuery = query(collection(db, "users"), where("uid", "!=", user.uid));
+    const usersQuery = query(
+      collection(db, "users"), 
+      where("uid", "!=", user.uid),
+      where("online", "==", true)
+    );
     const unsubscribeUsers = onSnapshot(usersQuery, (querySnapshot) => {
       const userList: User[] = [];
       querySnapshot.forEach((doc) => {
@@ -174,7 +178,7 @@ export default function Dashboard() {
                   ))}
                 </ul>
               ) : (
-                 <p className="text-sm text-muted-foreground text-center py-8">No other players are online right now.</p>
+                 <p className="text-sm text-muted-foreground text-center py-8">В данный момент других игроков нет в сети.</p>
               )}
             </CardContent>
           </Card>
