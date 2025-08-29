@@ -24,9 +24,13 @@ export default function Header() {
 
   const handleLogout = async () => {
     if (user) {
-      // Set user offline status in Firestore
-      const userRef = doc(db, "users", user.uid);
-      await updateDoc(userRef, { online: false });
+      try {
+        // Set user offline status in Firestore
+        const userRef = doc(db, "users", user.uid);
+        await updateDoc(userRef, { online: false });
+      } catch (error) {
+        console.error("Failed to update user status to offline:", error);
+      }
     }
     await signOut(auth);
     router.push("/login");

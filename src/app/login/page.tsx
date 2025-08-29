@@ -50,7 +50,7 @@ export default function AuthPage() {
         wins: 0,
         losses: 0,
         online: true,
-      }, { merge: true });
+      });
 
       router.push("/");
 
